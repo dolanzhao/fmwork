@@ -68,7 +68,7 @@ def setup_engine():
 
     var.engine = LLM(
         model                = par.model_path,
-        max_model_len        = max_model_len,
+        # max_model_len        = max_model_len,
         max_num_seqs         = max_num_seqs,
         tensor_parallel_size = par.tensor_parallel_size,
         enforce_eager        = True,
@@ -85,23 +85,10 @@ def setup_input():
 
 def setup_input_text():
 
-    messages = [
-        {
-            'role': 'user',
-            'content': [
-                { 'type': 'image' },
-                { 'type': 'text', 'text': par.input_text },
-            ],
-        },
-    ]
 
     tokenizer = AutoTokenizer.from_pretrained(par.model_path)
-
-    prompt_token_ids = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt = True,
-        tokenize = True,
-    )
+    prompt = f"<|system|>\n<image>\n{par.input_text}\n<|assistant|>\n"
+    prompt_token_ids = tokenizer.encode(prompt, add_special_tokens=False)
 
     par.input_size = len(prompt_token_ids)
 
@@ -125,11 +112,15 @@ def setup_input_generate():
         if i in vocab:
             vocab.remove(i)
 
+    prompt = "<|system|>\n<image>\n<|assistant|>\n"
+    base_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+    remaining_size = par.input_size - len(base_tokens)
+
     inputs = []
     for b in range(par.batch_size):
         inputs.append({
             'prompt_token_ids':
-                np.random.choice(vocab, size = par.input_size).tolist(),
+                base_tokens + np.random.choice(vocab, size=remaining_size).tolist(),
             'multi_modal_data' : { 'image': setup_image() },
         })
 
@@ -149,6 +140,7 @@ def setup_image_url():
     if not var.__image:
         var.__image = Image.open(
             requests.get(par.image_url, stream = True).raw)
+        par.image_width, par.image_height = var.__image.size
 
     return var.__image
 
@@ -194,7 +186,8 @@ def run(r):
 
         print()
         print('prompt_token_ids:        ', len(output.prompt_token_ids))
-        print('encoder_prompt_token_ids:', len(output.encoder_prompt_token_ids))
+        if output.encoder_prompt_token_ids:
+            print('encoder_prompt_token_ids:', len(output.encoder_prompt_token_ids))
         print('outputs[0].token_ids:    ', len(output.outputs[0].token_ids))
         print('output.outputs[0].text:')
         print()
@@ -230,6 +223,8 @@ def show(dts):
         'FMWORK RES',
         datetime.datetime.now().strftime('%Y%m%d-%H%M%S.%f'),
         par.input_size,
+        par.image_height,
+        par.image_width,
         par.output_size,
         par.batch_size,
         par.tensor_parallel_size,
@@ -241,6 +236,8 @@ def show(dts):
     print()
 
     print('Input size                = %d'   % (par.input_size))
+    print('Image Height               = %d'   % (par.image_height))
+    print('Image Width                = %d'   % (par.image_width))
     print('Output size               = %d'   % (par.output_size))
     print('Batch size                = %d'   % (par.batch_size))
     print('Tensor parallel size      = %d'   % (par.tensor_parallel_size))
